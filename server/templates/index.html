@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSR & IMU Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.2/heatmap.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .heatmap-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 2 / 1;
+        }
+
+        .heatmap-canvas,
+        .sole-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .sole-overlay {
+            pointer-events: none;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 text-gray-800">
+    <div class="container mx-auto p-4 md:p-8">
+
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Sensor Fusion Dashboard</h1>
+            <div class="flex items-center gap-4">
+                <select id="samplingRateSelect"
+                    class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2.5">
+                    <option value="40" selected>40 Hz (Max)</option>
+                    <option value="20">20 Hz</option>
+                    <option value="10">10 Hz</option>
+                    <option value="5">5 Hz</option>
+                    <option value="2">2 Hz</option>
+                </select>
+                <select id="durationSelect"
+                    class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2.5">
+                    <option value="manual" selected>Manual Recording</option>
+                    <option value="10">10 Seconds</option>
+                    <option value="15">15 Seconds</option>
+                    <option value="30">30 Seconds</option>
+                    <option value="60">1 Minute</option>
+                    <option value="120">2 Minutes</option>
+                    <option value="300">5 Minutes</option>
+                </select>
+                <button id="recordButton"
+                    class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors duration-300 shadow-md whitespace-nowrap">
+                    Start Recording
+                </button>
+                <span id="timerDisplay" class="text-lg font-mono text-gray-700 w-24 text-left">00:00</span>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Left Foot Force</h3>
+                <div class="relative h-64 md:h-80">
+                    <canvas id="leftFootChart"></canvas>
+                </div>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Combined Pressure Heatmap</h3>
+                <div id="combinedHeatmapContainer" class="heatmap-container mx-auto" style="max-width: 500px;">
+                    <img src="outline.png" alt="Sole Outline" class="sole-overlay" onerror="this.style.display='none'">
+                </div>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Right Foot Force</h3>
+                <div class="relative h-64 md:h-80">
+                    <canvas id="rightFootChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+            <h3 class="text-xl font-semibold text-center">IMU Data (WT901BLECL5.0)</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="p-4 bg-gray-50 rounded-lg">
+                    <h4 class="font-bold text-center">Acceleration (m/s²)</h4>
+                    <p class="text-sm">X: <span id="acc_x_val">N/A</span></p>
+                    <p class="text-sm">Y: <span id="acc_y_val">N/A</span></p>
+                    <p class="text-sm">Z: <span id="acc_z_val">N/A</span></p>
+                </div>
+                <div class="p-4 bg-gray-50 rounded-lg">
+                    <h4 class="font-bold text-center">Gyroscope (°/s)</h4>
+                    <p class="text-sm">X: <span id="gyro_x_val">N/A</span></p>
+                    <p class="text-sm">Y: <span id="gyro_y_val">N/A</span></p>
+                    <p class="text-sm">Z: <span id="gyro_z_val">N/A</span></p>
+                </div>
+                <div class="p-4 bg-gray-50 rounded-lg">
+                    <h4 class="font-bold text-center">Angles (Euler)</h4>
+                    <p class="text-sm">Roll: <span id="roll_val">N/A</span>°</p>
+                    <p class="text-sm">Pitch: <span id="pitch_val">N/A</span>°</p>
+                    <p class="text-sm">Yaw: <span id="yaw_val">N/A</span>°</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-4">
+                <div class="relative h-64 md:h-80">
+                    <canvas id="accChart"></canvas>
+                </div>
+                <div class="relative h-64 md:h-80">
+                    <canvas id="gyroChart"></canvas>
+                </div>
+                <div class="relative h-64 md:h-80">
+                    <canvas id="angleChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const socket = io('http://localhost:5000');
+        socket.on('connect', () => console.log('Successfully connected to the real-time server!'));
+        socket.on('disconnect', () => console.log('Disconnected from the server.'));
+        const sensorLabels = ["FSR 1", "FSR 2", "FSR 3", "FSR 4"];
+
+        // Data History & Recording State
+        let isRecording = false;
+        let recordedData = [];
+        let recordingTimer = null;
+        let recordingTimeout = null;
+        let startTime = 0;
+        let samplingRate = 40;
+        let dataCounter = 0;
+        let discardInterval = 1;
+        // DOM Elements
+        const recordButton = document.getElementById('recordButton');
+        const durationSelect = document.getElementById('durationSelect');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const leftCtx = document.getElementById('leftFootChart').getContext('2d');
+        const rightCtx = document.getElementById('rightFootChart').getContext('2d');
+        const combinedHeatmapContainer = document.getElementById('combinedHeatmapContainer');
+        const samplingRateSelect = document.getElementById('samplingRateSelect');
+        const accCtx = document.getElementById('accChart').getContext('2d');
+        const gyroCtx = document.getElementById('gyroChart').getContext('2d');
+        const angleCtx = document.getElementById('angleChart').getContext('2d');
+
+        // Heatmap Configuration
+        const sensorCoordinates = {
+            left_fsr1: { x: 90, y: 75 },
+            left_fsr2: { x: 120, y: 100 },
+            left_fsr3: { x: 50, y: 100 },
+            left_fsr4: { x: 80, y: 165 },
+            right_fsr1: { x: 330, y: 75 },
+            right_fsr2: { x: 370, y: 100 },
+            right_fsr3: { x: 310, y: 100 },
+            right_fsr4: { x: 340, y: 170 }
+        };
+        let heatmapPoints = [
+            { x: sensorCoordinates.left_fsr1.x, y: sensorCoordinates.left_fsr1.y, value: 0 },
+            { x: sensorCoordinates.left_fsr2.x, y: sensorCoordinates.left_fsr2.y, value: 0 },
+            { x: sensorCoordinates.left_fsr3.x, y: sensorCoordinates.left_fsr3.y, value: 0 },
+            { x: sensorCoordinates.left_fsr4.x, y: sensorCoordinates.left_fsr4.y, value: 0 },
+            { x: sensorCoordinates.right_fsr1.x, y: sensorCoordinates.right_fsr1.y, value: 0 },
+            { x: sensorCoordinates.right_fsr2.x, y: sensorCoordinates.right_fsr2.y, value: 0 },
+            { x: sensorCoordinates.right_fsr3.x, y: sensorCoordinates.right_fsr3.y, value: 0 },
+            { x: sensorCoordinates.right_fsr4.x, y: sensorCoordinates.right_fsr4.y, value: 0 }
+        ];
+        const combinedHeatmap = h337.create({
+            container: combinedHeatmapContainer,
+            radius: 30,
+            maxOpacity: .8,
+            minOpacity: 0,
+            blur: .75
+        });
+        // FSR Bar Chart Creation
+        function createBarChart(ctx, label, barColor, gridColor, labelColor) {
+            return new Chart(ctx, {
+                type: 'bar',
+                data: { labels: sensorLabels, datasets: [{ label: label, data: [0, 0, 0, 0], backgroundColor: barColor, borderColor: barColor, borderWidth: 1, borderRadius: 5, }] },
+                options: { maintainAspectRatio: false, responsive: true, scales: { y: { beginAtZero: true, title: { display: true, text: 'Force (N)', color: labelColor, font: { size: 14 } }, grid: { color: gridColor, borderColor: gridColor }, ticks: { color: labelColor } }, x: { title: { display: true, text: 'Sensors', color: labelColor, font: { size: 14 } }, grid: { display: false }, ticks: { color: labelColor } } }, plugins: { legend: { display: false }, tooltip: { enabled: true, backgroundColor: '#fff', titleColor: '#000', bodyColor: '#333', borderColor: '#ddd', borderWidth: 1 } } }
+            });
+        }
+        const leftChart = createBarChart(leftCtx, 'Left Foot Force', 'rgba(96, 165, 250, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+        const rightChart = createBarChart(rightCtx, 'Right Foot Force', 'rgba(74, 222, 128, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+        // IMU Bar Chart Creation
+        function createIMUBarChart(ctx, labels, datasetLabel, barColor, unit, yMin, yMax) {
+            return new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: datasetLabel,
+                        data: [0, 0, 0],
+                        backgroundColor: barColor,
+                        borderColor: barColor,
+                        borderWidth: 1,
+                        borderRadius: 5
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            min: yMin,
+                            max: yMax,
+                            title: {
+                                display: true,
+                                text: unit
+                            },
+                            ticks: {
+                                callback: function (value) {
+                                    return value.toFixed(1);
+                                }
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        title: {
+                            display: true,
+                            text: datasetLabel,
+                            font: {
+                                size: 16
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        const accChart = createIMUBarChart(accCtx, ['X', 'Y', 'Z'], 'Acceleration (m/s²)', 'rgba(255, 159, 64, 0.8)', 'm/s²', -10, 10);
+        const gyroChart = createIMUBarChart(gyroCtx, ['X', 'Y', 'Z'], 'Gyroscope (°/s)', 'rgba(75, 192, 192, 0.8)', '°/s', -200, 200);
+        const angleChart = createIMUBarChart(angleCtx, ['Roll', 'Pitch', 'Yaw'], 'Angles (°)', 'rgba(153, 102, 255, 0.8)', '°', -180, 180);
+
+        // Utility functions
+        function updateTimerDisplay() {
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(elapsedSeconds / 60).toString().padStart(2, '0');
+            const seconds = (elapsedSeconds % 60).toString().padStart(2, '0');
+            timerDisplay.textContent = `${minutes}:${seconds}`;
+        }
+        function toggleRecording() {
+            isRecording = !isRecording;
+            if (isRecording) {
+                recordedData = [];
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                recordButton.classList.add('bg-red-500', 'hover:bg-red-600');
+                durationSelect.disabled = true;
+                startTime = Date.now();
+                updateTimerDisplay();
+                recordingTimer = setInterval(updateTimerDisplay, 1000);
+                const duration = parseInt(durationSelect.value, 10);
+                if (!isNaN(duration)) {
+                    recordingTimeout = setTimeout(toggleRecording, duration * 1000);
+                }
+            } else {
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('bg-red-500', 'hover:bg-red-600');
+                recordButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                durationSelect.disabled = false;
+                clearInterval(recordingTimer);
+                clearTimeout(recordingTimeout);
+                timerDisplay.textContent = '00:00';
+                downloadCSV();
+            }
+        }
+        recordButton.addEventListener('click', toggleRecording);
+        samplingRateSelect.addEventListener('change', (e) => {
+            const newRate = parseInt(e.target.value, 10);
+            if (!isNaN(newRate)) {
+                console.log(`Sending new sampling rate command to server: ${newRate} Hz`);
+
+                // Emit an event to the backend server with the new rate.
+                socket.emit('change_sampling_rate', { 'rate': newRate });
+            }
+        });
+
+        function downloadCSV() {
+            if (recordedData.length === 0) {
+                console.log("No data was recorded.");
+                return;
+            }
+
+            // 1. Define the new header with a single timestamp column
+            const header = 'timestamp,left_fsr1_N,left_fsr2_N,left_fsr3_N,left_fsr4_N,right_fsr1_N,right_fsr2_N,right_fsr3_N,right_fsr4_N\n';
+
+            const leftData = recordedData.filter(d => d.id === 'left');
+            const rightData = recordedData.filter(d => d.id === 'right');
+
+            let rows = [];
+            const numRows = Math.max(leftData.length, rightData.length);
+
+            for (let i = 0; i < numRows; i++) {
+                const left = leftData[i];
+                const right = rightData[i];
+
+                // 2. Use the left timestamp if available, otherwise use the right one.
+                const timestamp = left ? left.timestamp : (right ? right.timestamp : '');
+
+                // Get values for each sensor, using an empty string if data is missing for that row
+                const l_s1 = left ? left.force1_N : '';
+                const l_s2 = left ? left.force2_N : '';
+                const l_s3 = left ? left.force3_N : '';
+                const l_s4 = left ? left.force4_N : '';
+
+                const r_s1 = right ? right.force1_N : '';
+                const r_s2 = right ? right.force2_N : '';
+                const r_s3 = right ? right.force3_N : '';
+                const r_s4 = right ? right.force4_N : '';
+
+                // 3. Combine all data into a single row string
+                rows.push(`${timestamp},${l_s1},${l_s2},${l_s3},${l_s4},${r_s1},${r_s2},${r_s3},${r_s4}`);
+            }
+
+            const csvContent = header + rows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+
+            // Bonus: Create a dynamic filename with the current date and time
+            const now = new Date();
+            const date = now.toISOString().slice(0, 10); // YYYY-MM-DD
+            const time = now.toTimeString().slice(0, 8).replace(/:/g, '-'); // HH-MM-SS
+            link.setAttribute('download', `fsr_recording_${date}_${time}.csv`);
+
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- Socket.IO Event Handlers ---
+        socket.on('sensor_update', (data) => {
+            if (typeof data !== 'object' || data === null) {
+                console.error("Received invalid data format:", data);
+                return;
+            }
+            const forces = [data.force1_N, data.force2_N, data.force3_N, data.force4_N];
+
+            if (data.id === "left") {
+                leftChart.data.datasets[0].data = forces;
+                leftChart.update();
+                heatmapPoints[0].value = data.force1_N;
+                heatmapPoints[1].value = data.force2_N;
+                heatmapPoints[2].value = data.force3_N;
+                heatmapPoints[3].value = data.force4_N;
+            } else if (data.id === "right") {
+                rightChart.data.datasets[0].data = forces;
+                rightChart.update();
+                heatmapPoints[4].value = data.force1_N;
+                heatmapPoints[5].value = data.force2_N;
+                heatmapPoints[6].value = data.force3_N;
+                heatmapPoints[7].value = data.force4_N;
+            }
+            combinedHeatmap.setData({
+                max: 50,
+                data: heatmapPoints
+            });
+            if (isRecording) {
+                recordedData.push(data);
+            }
+        });
+        // NEW Socket.IO event handler for IMU data
+        socket.on('imu_update', (data) => {
+            // Update the text values for acceleration, gyro, and angles
+            document.getElementById('acc_x_val').innerText = data.acc.x.toFixed(2);
+            document.getElementById('acc_y_val').innerText = data.acc.y.toFixed(2);
+            document.getElementById('acc_z_val').innerText = data.acc.z.toFixed(2);
+            document.getElementById('gyro_x_val').innerText = data.gyro.x.toFixed(2);
+            document.getElementById('gyro_y_val').innerText = data.gyro.y.toFixed(2);
+            document.getElementById('gyro_z_val').innerText = data.gyro.z.toFixed(2);
+            document.getElementById('roll_val').innerText = data.angle.roll.toFixed(1);
+            document.getElementById('pitch_val').innerText = data.angle.pitch.toFixed(1);
+            document.getElementById('yaw_val').innerText = data.angle.yaw.toFixed(1);
+
+            // Update the bar charts with the new data
+            accChart.data.datasets[0].data = [data.acc.x, data.acc.y, data.acc.z];
+            accChart.update();
+            gyroChart.data.datasets[0].data = [data.gyro.x, data.gyro.y, data.gyro.z];
+            gyroChart.update();
+            angleChart.data.datasets[0].data = [data.angle.roll, data.angle.pitch, data.angle.yaw];
+            angleChart.update();
+        });
+    </script>
+</body>
+
+</html>

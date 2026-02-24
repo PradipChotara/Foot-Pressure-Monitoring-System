@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSR Dashboard</title>
+
+    <!-- Tailwind CSS for modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Socket.IO Client for real-time communication -->
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+
+    <style>
+        /* A nice, modern font for better readability */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for the table container in light mode */
+        .table-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #e2e8f0; /* gray-200 */
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #a0aec0; /* gray-400 */
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        
+        <!-- Header: Title and Recording Controls on one line -->
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">FSR Dashboard</h1>
+            <!-- Recording Controls -->
+            <div class="flex items-center gap-4">
+                <select id="durationSelect" class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2.5">
+                    <option value="manual" selected>Manual Recording</option>
+                    <option value="10">10 Seconds</option>
+                    <option value="15">15 Seconds</option>
+                    <option value="30">30 Seconds</option>
+                    <option value="60">1 Minute</option>
+                    <option value="120">2 Minutes</option>
+                    <option value="300">5 Minutes</option>
+                </select>
+                <button id="recordButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors duration-300 shadow-md whitespace-nowrap">
+                    Start Recording
+                </button>
+                <span id="timerDisplay" class="text-lg font-mono text-gray-700 w-24 text-left">00:00</span>
+            </div>
+        </div>
+
+        <!-- Dashboard Container using a responsive grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            <!-- Left Foot Card -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Left Foot Readings</h3>
+                <!-- Left Foot Table -->
+                <div class="table-container overflow-y-auto h-52">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-600 uppercase bg-gray-200 sticky top-0">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Timestamp</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 1 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 2 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 3 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 4 (N)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leftFootTableBody">
+                           <!-- Data rows will be inserted here by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Left Foot Chart -->
+                <div class="relative h-64 md:h-80">
+                    <canvas id="leftFootChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Right Foot Card -->
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Right Foot Readings</h3>
+                <!-- Right Foot Table -->
+                 <div class="table-container overflow-y-auto h-52">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-600 uppercase bg-gray-200 sticky top-0">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Timestamp</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 1 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 2 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 3 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 4 (N)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rightFootTableBody">
+                           <!-- Data rows will be inserted here by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Right Foot Chart -->
+                 <div class="relative h-64 md:h-80">
+                    <canvas id="rightFootChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Socket.IO Connection ---
+        const socket = io('http://localhost:5000');
+        socket.on('connect', () => console.log('Successfully connected to the real-time server!'));
+        socket.on('disconnect', () => console.log('Disconnected from the server.'));
+
+        const sensorLabels = ["FSR 1", "FSR 2", "FSR 3", "FSR 4"];
+        
+        // --- Data History & Recording State ---
+        const leftFootHistory = [];
+        const rightFootHistory = [];
+        const MAX_HISTORY_LENGTH = 5;
+        let isRecording = false;
+        let recordedData = []; 
+        let recordingTimer = null;
+        let recordingTimeout = null;
+        let startTime = 0;
+
+        // --- DOM Elements ---
+        const recordButton = document.getElementById('recordButton');
+        const durationSelect = document.getElementById('durationSelect');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const leftTableBody = document.getElementById('leftFootTableBody');
+        const rightTableBody = document.getElementById('rightFootTableBody');
+        const leftCtx = document.getElementById('leftFootChart').getContext('2d');
+        const rightCtx = document.getElementById('rightFootChart').getContext('2d');
+
+        /**
+         * Updates the timer display every second during recording.
+         */
+        function updateTimerDisplay() {
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(elapsedSeconds / 60).toString().padStart(2, '0');
+            const seconds = (elapsedSeconds % 60).toString().padStart(2, '0');
+            timerDisplay.textContent = `${minutes}:${seconds}`;
+        }
+
+        /**
+         * Toggles the recording state and handles the timer logic.
+         */
+        function toggleRecording() {
+            isRecording = !isRecording;
+            if (isRecording) {
+                // --- Start recording ---
+                recordedData = [];
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                recordButton.classList.add('bg-red-500', 'hover:bg-red-600');
+                durationSelect.disabled = true;
+
+                startTime = Date.now();
+                updateTimerDisplay(); // Show 00:00 immediately
+                recordingTimer = setInterval(updateTimerDisplay, 1000);
+
+                const duration = parseInt(durationSelect.value, 10);
+                if (!isNaN(duration)) {
+                    recordingTimeout = setTimeout(toggleRecording, duration * 1000);
+                }
+            } else {
+                // --- Stop recording ---
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('bg-red-500', 'hover:bg-red-600');
+                recordButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                durationSelect.disabled = false;
+
+                clearInterval(recordingTimer);
+                clearTimeout(recordingTimeout); // Clear auto-stop in case of manual stop
+                timerDisplay.textContent = '00:00';
+
+                downloadCSV();
+            }
+        }
+        recordButton.addEventListener('click', toggleRecording);
+
+        /**
+         * Converts recorded data to a CSV and triggers download.
+         */
+        function downloadCSV() {
+            if (recordedData.length === 0) {
+                console.log("No data was recorded.");
+                return;
+            }
+            const leftData = recordedData.filter(d => d.id === 'left');
+            const rightData = recordedData.filter(d => d.id === 'right');
+            const header = 'l_timestamp,l_s1,l_s2,l_s3,l_s4,r_timestamp,r_s1,r_s2,r_s3,r_s4\n';
+            let rows = [];
+            const numRows = Math.max(leftData.length, rightData.length);
+
+            for (let i = 0; i < numRows; i++) {
+                const left = leftData[i];
+                const right = rightData[i];
+                const l_ts = left ? left.timestamp : '';
+                const l_s1 = left ? left.force1_N : '';
+                const l_s2 = left ? left.force2_N : '';
+                const l_s3 = left ? left.force3_N : '';
+                const l_s4 = left ? left.force4_N : '';
+                const r_ts = right ? right.timestamp : '';
+                const r_s1 = right ? right.force1_N : '';
+                const r_s2 = right ? right.force2_N : '';
+                const r_s3 = right ? right.force3_N : '';
+                const r_s4 = right ? right.force4_N : '';
+                rows.push(`${l_ts},${l_s1},${l_s2},${l_s3},${l_s4},${r_ts},${r_s1},${r_s2},${r_s3},${r_s4}`);
+            }
+
+            const csvContent = header + rows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'fsr_recording.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        /**
+         * Updates a table with the latest 5 records.
+         */
+        function updateTable(tableBody, history) {
+            tableBody.innerHTML = '';
+            const recentHistory = [...history].reverse();
+            for (const record of recentHistory) {
+                const row = document.createElement('tr');
+                row.className = 'bg-white border-b border-gray-200';
+                row.innerHTML = `
+                    <td class="px-4 py-2 font-mono text-gray-700">${record.timestamp}</td>
+                    <td class="px-4 py-2 text-center">${record.force1_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force2_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force3_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force4_N.toFixed(2)}</td>
+                `;
+                tableBody.appendChild(row);
+            }
+        }
+
+        /**
+         * Creates a new bar chart instance.
+         */
+        function createBarChart(ctx, label, barColor, gridColor, labelColor) {
+            return new Chart(ctx, {
+                type: 'bar',
+                data: { labels: sensorLabels, datasets: [{ label: label, data: [0, 0, 0, 0], backgroundColor: barColor, borderColor: barColor, borderWidth: 1, borderRadius: 5, }] },
+                options: { maintainAspectRatio: false, responsive: true, scales: { y: { beginAtZero: true, title: { display: true, text: 'Force (N)', color: labelColor, font: { size: 14 } }, grid: { color: gridColor, borderColor: gridColor }, ticks: { color: labelColor } }, x: { title: { display: true, text: 'Sensors', color: labelColor, font: { size: 14 } }, grid: { display: false }, ticks: { color: labelColor } } }, plugins: { legend: { display: false }, tooltip: { enabled: true, backgroundColor: '#fff', titleColor: '#000', bodyColor: '#333', borderColor: '#ddd', borderWidth: 1 } } }
+            });
+        }
+
+        // Create charts
+        const leftChart = createBarChart(leftCtx, 'Left Foot Force', 'rgba(96, 165, 250, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+        const rightChart = createBarChart(rightCtx, 'Right Foot Force', 'rgba(74, 222, 128, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+
+        // --- Socket.IO Event Handler ---
+        socket.on('sensor_update', (data) => {
+            if (typeof data !== 'object' || data === null) {
+                console.error("Received invalid data format:", data);
+                return;
+            }
+
+            const forces = [data.force1_N, data.force2_N, data.force3_N, data.force4_N];
+            if (data.id === "left") {
+                leftChart.data.datasets[0].data = forces;
+                leftChart.update();
+                leftFootHistory.push(data);
+                if (leftFootHistory.length > MAX_HISTORY_LENGTH) leftFootHistory.shift();
+                updateTable(leftTableBody, leftFootHistory);
+            } else if (data.id === "right") {
+                rightChart.data.datasets[0].data = forces;
+                rightChart.update();
+                rightFootHistory.push(data);
+                if (rightFootHistory.length > MAX_HISTORY_LENGTH) rightFootHistory.shift();
+                updateTable(rightTableBody, rightFootHistory);
+            }
+
+            if (isRecording) {
+                recordedData.push(data);
+            }
+        });
+    </script>
+</body>
+</html>

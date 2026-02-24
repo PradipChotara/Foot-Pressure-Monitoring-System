@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSR Dashboard</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.2/heatmap.min.js"></script>
+
+    <style>
+        /* A nice, modern font for better readability */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for the table container in light mode */
+        .table-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #e2e8f0; /* gray-200 */
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #a0aec0; /* gray-400 */
+            border-radius: 3px;
+        }
+        /* Container for heatmap and overlay */
+        .heatmap-container {
+            position: relative;
+            width: 100%;
+            /* Maintain aspect ratio of the new two-foot image */
+            aspect-ratio: 2 / 1;
+        }
+        .heatmap-canvas, .sole-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .sole-overlay {
+            /* Make the overlay image non-interactive */
+            pointer-events: none;
+            /* Adjust opacity as needed */
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">FSR Dashboard</h1>
+            <div class="flex items-center gap-4">
+                <select id="samplingRateSelect" class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2.5">
+                    <option value="40" selected>40 Hz (Max)</option>
+                    <option value="20">20 Hz</option>
+                    <option value="10">10 Hz</option>
+                    <option value="5">5 Hz</option>
+                    <option value="2">2 Hz</option>
+                </select>
+                <select id="durationSelect" class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2.5">
+                    <option value="manual" selected>Manual Recording</option>
+                    <option value="10">10 Seconds</option>
+                    <option value="15">15 Seconds</option>
+                    <option value="30">30 Seconds</option>
+                    <option value="60">1 Minute</option>
+                    <option value="120">2 Minutes</option>
+                    <option value="300">5 Minutes</option>
+                </select>
+                <button id="recordButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-lg transition-colors duration-300 shadow-md whitespace-nowrap">
+                    Start Recording
+                </button>
+                <span id="timerDisplay" class="text-lg font-mono text-gray-700 w-24 text-left">00:00</span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Left Foot Readings</h3>
+                <div class="table-container overflow-y-auto h-52">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-600 uppercase bg-gray-200 sticky top-0">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Timestamp</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 1 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 2 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 3 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 4 (N)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leftFootTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="relative h-64 md:h-80">
+                    <canvas id="leftFootChart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6">
+                <h3 class="text-xl font-semibold text-center">Right Foot Readings</h3>
+                 <div class="table-container overflow-y-auto h-52">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-600 uppercase bg-gray-200 sticky top-0">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Timestamp</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 1 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 2 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 3 (N)</th>
+                                <th scope="col" class="px-4 py-3 text-center">FSR 4 (N)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rightFootTableBody"></tbody>
+                    </table>
+                </div>
+                 <div class="relative h-64 md:h-80">
+                    <canvas id="rightFootChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col gap-6 mt-8">
+            <h3 class="text-xl font-semibold text-center">Combined Pressure Heatmap</h3>
+            <div id="combinedHeatmapContainer" class="heatmap-container mx-auto" style="max-width: 500px;">
+                <img src="outline.png" alt="Sole Outline" class="sole-overlay" onerror="this.style.display='none'">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Socket.IO Connection ---
+        const socket = io('http://localhost:5000');
+        socket.on('connect', () => console.log('Successfully connected to the real-time server!'));
+        socket.on('disconnect', () => console.log('Disconnected from the server.'));
+
+        const sensorLabels = ["FSR 1", "FSR 2", "FSR 3", "FSR 4"];
+        
+        // --- Data History & Recording State ---
+        const leftFootHistory = [];
+        const rightFootHistory = [];
+        const MAX_HISTORY_LENGTH = 5;
+        let isRecording = false;
+        let recordedData = []; 
+        let recordingTimer = null;
+        let recordingTimeout = null;
+        let startTime = 0;
+        
+        // **NEW STATE VARIABLES**
+        let samplingRate = 40; // Default base sampling rate in Hz from ESP32
+        let dataCounter = 0; // Counter for discarding data
+        let discardInterval = 1; // Default to no discarding
+
+        // --- DOM Elements ---
+        const recordButton = document.getElementById('recordButton');
+        const durationSelect = document.getElementById('durationSelect');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const leftTableBody = document.getElementById('leftFootTableBody');
+        const rightTableBody = document.getElementById('rightFootTableBody');
+        const leftCtx = document.getElementById('leftFootChart').getContext('2d');
+        const rightCtx = document.getElementById('rightFootChart').getContext('2d');
+        const combinedHeatmapContainer = document.getElementById('combinedHeatmapContainer');
+        const samplingRateSelect = document.getElementById('samplingRateSelect'); // New element
+        
+        // --- Heatmap Configuration ---
+        const sensorCoordinates = {
+            // Left foot coordinates (X values are 0-50)
+            left_fsr1: { x: 110, y: 75 }, // P0
+            left_fsr2: { x: 160, y: 100 }, // P1
+            left_fsr3: { x: 70, y: 100 }, // P2
+            left_fsr4: { x: 90, y: 200 }, // P3
+            // Right foot coordinates (X values are 50-100)
+            right_fsr1: { x: 390, y: 75 }, // P0
+            right_fsr2: { x: 430, y: 100 }, // P1
+            right_fsr3: { x: 360, y: 100 }, // P2
+            right_fsr4: { x: 400, y: 200 }  // P3
+        };
+
+        // State to hold all 8 heatmap data points
+        let heatmapPoints = [
+            { x: sensorCoordinates.left_fsr1.x, y: sensorCoordinates.left_fsr1.y, value: 0 },
+            { x: sensorCoordinates.left_fsr2.x, y: sensorCoordinates.left_fsr2.y, value: 0 },
+            { x: sensorCoordinates.left_fsr3.x, y: sensorCoordinates.left_fsr3.y, value: 0 },
+            { x: sensorCoordinates.left_fsr4.x, y: sensorCoordinates.left_fsr4.y, value: 0 },
+            { x: sensorCoordinates.right_fsr1.x, y: sensorCoordinates.right_fsr1.y, value: 0 },
+            { x: sensorCoordinates.right_fsr2.x, y: sensorCoordinates.right_fsr2.y, value: 0 },
+            { x: sensorCoordinates.right_fsr3.x, y: sensorCoordinates.right_fsr3.y, value: 0 },
+            { x: sensorCoordinates.right_fsr4.x, y: sensorCoordinates.right_fsr4.y, value: 0 }
+        ];
+
+        const combinedHeatmap = h337.create({
+            container: combinedHeatmapContainer,
+            radius: 30,
+            maxOpacity: .8,
+            minOpacity: 0,
+            blur: .75
+        });
+
+        function updateTimerDisplay() {
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(elapsedSeconds / 60).toString().padStart(2, '0');
+            const seconds = (elapsedSeconds % 60).toString().padStart(2, '0');
+            timerDisplay.textContent = `${minutes}:${seconds}`;
+        }
+
+        function toggleRecording() {
+            isRecording = !isRecording;
+            if (isRecording) {
+                recordedData = [];
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                recordButton.classList.add('bg-red-500', 'hover:bg-red-600');
+                durationSelect.disabled = true;
+                startTime = Date.now();
+                updateTimerDisplay();
+                recordingTimer = setInterval(updateTimerDisplay, 1000);
+                const duration = parseInt(durationSelect.value, 10);
+                if (!isNaN(duration)) {
+                    recordingTimeout = setTimeout(toggleRecording, duration * 1000);
+                }
+            } else {
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('bg-red-500', 'hover:bg-red-600');
+                recordButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+                durationSelect.disabled = false;
+                clearInterval(recordingTimer);
+                clearTimeout(recordingTimeout);
+                timerDisplay.textContent = '00:00';
+                downloadCSV();
+            }
+        }
+        recordButton.addEventListener('click', toggleRecording);
+
+        // **NEW EVENT LISTENER FOR DROPDOWN**
+        samplingRateSelect.addEventListener('change', (e) => {
+            const desiredRate = parseInt(e.target.value);
+            // Calculate discard interval: max_rate / desired_rate
+            discardInterval = Math.round(samplingRate / desiredRate);
+            console.log(`Sampling rate changed to ${desiredRate} Hz. Discarding every ${discardInterval}th record.`);
+            dataCounter = 0; // Reset counter on change
+        });
+
+        function downloadCSV() {
+            if (recordedData.length === 0) {
+                console.log("No data was recorded.");
+                return;
+            }
+            const leftData = recordedData.filter(d => d.id === 'left');
+            const rightData = recordedData.filter(d => d.id === 'right');
+            const header = 'l_timestamp,l_s1,l_s2,l_s3,l_s4,r_timestamp,r_s1,r_s2,r_s3,r_s4\n';
+            let rows = [];
+            const numRows = Math.max(leftData.length, rightData.length);
+            for (let i = 0; i < numRows; i++) {
+                const left = leftData[i];
+                const right = rightData[i];
+                const l_ts = left ? left.timestamp : '';
+                const l_s1 = left ? left.force1_N : '';
+                const l_s2 = left ? left.force2_N : '';
+                const l_s3 = left ? left.force3_N : '';
+                const l_s4 = left ? left.force4_N : '';
+                const r_ts = right ? right.timestamp : '';
+                const r_s1 = right ? right.force1_N : '';
+                const r_s2 = right ? right.force2_N : '';
+                const r_s3 = right ? right.force3_N : '';
+                const r_s4 = right ? right.force4_N : '';
+                rows.push(`${l_ts},${l_s1},${l_s2},${l_s3},${l_s4},${r_ts},${r_s1},${r_s2},${r_s3},${r_s4}`);
+            }
+            const csvContent = header + rows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'fsr_recording.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function updateTable(tableBody, history) {
+            tableBody.innerHTML = '';
+            const recentHistory = [...history].reverse();
+            for (const record of recentHistory) {
+                const row = document.createElement('tr');
+                row.className = 'bg-white border-b border-gray-200';
+                row.innerHTML = `
+                    <td class="px-4 py-2 font-mono text-gray-700">${record.timestamp}</td>
+                    <td class="px-4 py-2 text-center">${record.force1_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force2_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force3_N.toFixed(2)}</td>
+                    <td class="px-4 py-2 text-center">${record.force4_N.toFixed(2)}</td>
+                `;
+                tableBody.appendChild(row);
+            }
+        }
+
+        function createBarChart(ctx, label, barColor, gridColor, labelColor) {
+            return new Chart(ctx, {
+                type: 'bar',
+                data: { labels: sensorLabels, datasets: [{ label: label, data: [0, 0, 0, 0], backgroundColor: barColor, borderColor: barColor, borderWidth: 1, borderRadius: 5, }] },
+                options: { maintainAspectRatio: false, responsive: true, scales: { y: { beginAtZero: true, title: { display: true, text: 'Force (N)', color: labelColor, font: { size: 14 } }, grid: { color: gridColor, borderColor: gridColor }, ticks: { color: labelColor } }, x: { title: { display: true, text: 'Sensors', color: labelColor, font: { size: 14 } }, grid: { display: false }, ticks: { color: labelColor } } }, plugins: { legend: { display: false }, tooltip: { enabled: true, backgroundColor: '#fff', titleColor: '#000', bodyColor: '#333', borderColor: '#ddd', borderWidth: 1 } } }
+            });
+        }
+
+        const leftChart = createBarChart(leftCtx, 'Left Foot Force', 'rgba(96, 165, 250, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+        const rightChart = createBarChart(rightCtx, 'Right Foot Force', 'rgba(74, 222, 128, 0.8)', 'rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.7)');
+
+        // --- Socket.IO Event Handler ---
+        socket.on('sensor_update', (data) => {
+            if (typeof data !== 'object' || data === null) {
+                console.error("Received invalid data format:", data);
+                return;
+            }
+
+            // **NEW LOGIC: FILTER DATA BASED ON DISCARD INTERVAL**
+            dataCounter++;
+            if (dataCounter % discardInterval !== 0) {
+                // If it's not the record we want to keep, just return
+                return;
+            }
+            // Reset counter if it gets too high, to prevent overflow
+            if (dataCounter > discardInterval * 10) {
+                dataCounter = 0;
+            }
+
+            const forces = [data.force1_N, data.force2_N, data.force3_N, data.force4_N];
+            
+            if (data.id === "left") {
+                leftChart.data.datasets[0].data = forces;
+                leftChart.update();
+                leftFootHistory.push(data);
+                if (leftFootHistory.length > MAX_HISTORY_LENGTH) leftFootHistory.shift();
+                updateTable(leftTableBody, leftFootHistory);
+                // Update left foot points in the state
+                heatmapPoints[0].value = data.force1_N;
+                heatmapPoints[1].value = data.force2_N;
+                heatmapPoints[2].value = data.force3_N;
+                heatmapPoints[3].value = data.force4_N;
+            } else if (data.id === "right") {
+                rightChart.data.datasets[0].data = forces;
+                rightChart.update();
+                rightFootHistory.push(data);
+                if (rightFootHistory.length > MAX_HISTORY_LENGTH) rightFootHistory.shift();
+                updateTable(rightTableBody, rightFootHistory);
+                // Update right foot points in the state
+                heatmapPoints[4].value = data.force1_N;
+                heatmapPoints[5].value = data.force2_N;
+                heatmapPoints[6].value = data.force3_N;
+                heatmapPoints[7].value = data.force4_N;
+            }
+
+            // Update the combined heatmap with the full dataset
+            combinedHeatmap.setData({
+                max: 50, // Adjust this value based on your sensor's max expected force
+                data: heatmapPoints
+            });
+
+            if (isRecording) {
+                recordedData.push(data);
+            }
+        });
+    </script>
+</body>
+</html>
